@@ -12,6 +12,9 @@ This repository can be run as a self-hosted stack with:
 ## Start live on this machine
 
 This path uses the PostgreSQL and Ollama services already installed on the host.
+If PostgreSQL is not listening on port `5432`, the script starts the local
+PGlite database in `backend\.pglite` and syncs the checked-in SQL migrations
+before booting the backend.
 
 ```powershell
 cd "C:\Users\QCS\Documents\New project"
@@ -52,6 +55,27 @@ docker compose exec backend npm run seed
 
 - Chat: `http://localhost:3000/chat`
 - Admin: `http://localhost:3000/admin`
+
+### WhatsApp Cloud API
+
+The backend exposes the Meta webhook at:
+
+```text
+https://YOUR_PUBLIC_HOST/api/whatsapp/webhook
+```
+
+Set these backend environment values before registering the webhook in Meta:
+
+```powershell
+$env:WHATSAPP_VERIFY_TOKEN="your-long-random-webhook-token"
+$env:WHATSAPP_PHONE_NUMBER_ID="your-meta-phone-number-id"
+$env:WHATSAPP_ACCESS_TOKEN="your-meta-system-user-access-token"
+$env:WHATSAPP_DEFAULT_USER_EMAIL="retailer.kathmandu@example.com"
+```
+
+Meta requires a publicly accessible HTTPS webhook URL. For a local test, tunnel
+port `5000` with a tool such as ngrok or Cloudflare Tunnel and use the generated
+HTTPS URL plus `/api/whatsapp/webhook`.
 
 ### Stop the stack
 

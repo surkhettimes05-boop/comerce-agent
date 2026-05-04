@@ -11,10 +11,10 @@ test("seedDatabase inserts expected Nepal commerce data", async (t) => {
   await seedDatabase();
 
   const [retailers, suppliers, products, supplierPricing] = await Promise.all([
-    prisma.user.count({ where: { role: "CUSTOMER" } }),
-    prisma.user.count({ where: { role: "SUPPLIER" } }),
-    prisma.product.count(),
-    prisma.supplierProduct.count(),
+    prisma.user.count({ where: { tenant: { slug: "khaacho-demo" }, role: "CUSTOMER" } }),
+    prisma.user.count({ where: { tenant: { slug: "khaacho-demo" }, role: "SUPPLIER" } }),
+    prisma.product.count({ where: { tenant: { slug: "khaacho-demo" } } }),
+    prisma.supplierProduct.count({ where: { tenant: { slug: "khaacho-demo" } } }),
   ]);
 
   assert.equal(retailers, 5);

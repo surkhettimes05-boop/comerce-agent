@@ -36,14 +36,14 @@ function formatMoney(value) {
 
 function buildFindProductReply(agentResult) {
   if (!agentResult || !Array.isArray(agentResult.products) || agentResult.products.length === 0) {
-    return "I could not find a matching product in the current catalog.";
+    return "I could not find that item in the catalog yet. Please try the brand, product type, or pack size, for example Wai Wai 75g, sugar 1kg, or Coke 500ml.";
   }
 
   const topProduct = agentResult.products[0];
   const cheapestSupplier = topProduct.cheapestSupplier;
 
   if (!cheapestSupplier) {
-    return `Best match: ${topProduct.name} (${topProduct.sku}). No supplier pricing is available yet.`;
+    return `I found ${topProduct.name} (${topProduct.sku}), but supplier pricing is not added yet.`;
   }
 
   const rankedSuppliers = topProduct.rankedSuppliers
@@ -54,12 +54,12 @@ function buildFindProductReply(agentResult) {
     )
     .join("; ");
 
-  return `Best match: ${topProduct.name} (${topProduct.sku}). Cheapest supplier: ${cheapestSupplier.supplierName} at NPR ${formatMoney(cheapestSupplier.supplierPrice)}. Ranked suppliers: ${rankedSuppliers}.`;
+  return `I found ${topProduct.name} (${topProduct.sku}). Best current supplier is ${cheapestSupplier.supplierName} at NPR ${formatMoney(cheapestSupplier.supplierPrice)}. Other options: ${rankedSuppliers}.`;
 }
 
 function buildComparePriceReply(agentResult) {
   if (!agentResult || !Array.isArray(agentResult.products) || agentResult.products.length === 0) {
-    return "I could not find supplier pricing for a matching product.";
+    return "I could not find supplier rates for that item yet. Try the product name or pack size, for example chini 1kg, chamal 25kg, or Coke 1L.";
   }
 
   const topProduct = agentResult.products[0];
@@ -71,12 +71,14 @@ function buildComparePriceReply(agentResult) {
     )
     .join("; ");
 
-  return `Price comparison for ${topProduct.name} (${topProduct.sku}): ${rankedSuppliers}.`;
+  return `For ${topProduct.name} (${topProduct.sku}), current supplier rates are: ${rankedSuppliers}.`;
 }
 
 function buildAssistantReply(routeResult) {
+  const clarificationQuestion = routeResult?.understanding?.clarificationQuestion;
+
   if (!routeResult || routeResult.handled !== true) {
-    return "I could not route that request to a supported agent yet.";
+    return clarificationQuestion || "Please tell me the product name, quantity, or whether you want rates or an order.";
   }
 
   if (routeResult.agentIntent === "FIND_PRODUCT") {
@@ -88,7 +90,30 @@ function buildAssistantReply(routeResult) {
   }
 
   if (routeResult.agentIntent === "CREATE_ORDER") {
-    return "Order intent detected. Confirmation is required before I save an order.";
+    const agentResult = routeResult.agentResult;
+
+    if (agentResult?.status === "needs_clarification") {
+      return agentResult.clarificationQuestion || clarificationQuestion;
+    }
+
+    if (agentResult?.status === "needs_confirmation") {
+      const itemSummary = agentResult.items
+        .map((item) => `${item.quantity} ${item.packagingUnit || "unit"} ${item.name}`)
+        .join(", ");
+
+      return `Please confirm this order: ${itemSummary}. Total NPR ${agentResult.totalAmount}.`;
+    }
+
+    if (clarificationQuestion) {
+      return clarificationQuestion;
+    }
+
+    const understanding = routeResult.understanding;
+    const quantityText = understanding.quantity
+      ? `${understanding.quantity} ${understanding.unit || ""}`.trim()
+      : "the requested quantity";
+
+    return `I can prepare an order for ${quantityText} of ${understanding.productQuery}. Please confirm before I save it.`;
   }
 
   return "Your request was received, but no reply template is available for that agent yet.";
@@ -102,6 +127,7 @@ function normalizeChatResponse(routeResult, reply) {
       agentIntent: routeResult.agentIntent,
       originalIntent: routeResult.originalIntent,
       classification: routeResult.classification,
+      understanding: routeResult.understanding,
       agentName: routeResult.agentResult ? routeResult.agentResult.agentName : null,
     },
     data: routeResult.agentResult,
@@ -135,20 +161,27 @@ async function handleChatMessage(options = {}) {
     ? await prismaClient.user.findUnique({
         where: { id: trimmedUserId },
       })
-    : await prismaClient.user.findUnique({
-        where: { email: trimmedUserEmail },
+    : await prismaClient.user.findFirst({
+        where: {
+          email: trimmedUserEmail,
+          ...(options.tenantId ? { tenantId: options.tenantId } : {}),
+        },
       });
 
   if (!user) {
     throw new Error("User not found.");
   }
 
-  const routeResult = await orchestrator.routeMessage(trimmedMessage);
+  const routeResult = await orchestrator.routeMessage(trimmedMessage, {
+    tenantId: options.tenantId || user.tenantId,
+    userId: user.id,
+  });
   const reply = buildAssistantReply(routeResult);
 
   await prismaClient.$transaction([
     prismaClient.conversation.create({
       data: {
+        tenantId: options.tenantId || user.tenantId,
         userId: user.id,
         role: "USER",
         message: trimmedMessage,
@@ -156,6 +189,7 @@ async function handleChatMessage(options = {}) {
     }),
     prismaClient.conversation.create({
       data: {
+        tenantId: options.tenantId || user.tenantId,
         userId: user.id,
         role: "ASSISTANT",
         message: reply,

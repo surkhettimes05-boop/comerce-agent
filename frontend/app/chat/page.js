@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 const CHAT_ENDPOINT = "/api/chat";
+const DEMO_CUSTOMER_EMAIL = "retailer.kathmandu@example.com";
 
 const SAMPLE_PROMPTS = [
   "Need Wai Wai Chicken noodles",
@@ -11,72 +11,127 @@ const SAMPLE_PROMPTS = [
   "I want to order 10 cartons of Wai Wai tomorrow",
 ];
 
-function extractEntities(payload) {
+function ProductSummary({ payload }) {
   const products = Array.isArray(payload?.data?.products) ? payload.data.products : [];
-  const entities = [];
 
-  for (const product of products) {
-    entities.push({
-      type: "product",
-      label: `${product.name} (${product.sku})`,
-    });
-
-    if (product.cheapestSupplier) {
-      entities.push({
-        type: "supplier",
-        label: `${product.cheapestSupplier.supplierName} - NPR ${product.cheapestSupplier.supplierPrice}`,
-      });
-    }
+  if (products.length === 0) {
+    return null;
   }
 
-  return entities;
-}
-
-function IntentBadge({ intent }) {
   return (
-    <span
+    <div
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "6px 10px",
-        borderRadius: 999,
-        background: "#204f3d",
-        color: "#f7f4ed",
-        fontSize: 12,
-        fontWeight: 700,
-        letterSpacing: "0.06em",
+        display: "grid",
+        gap: 10,
+        marginTop: 12,
       }}
     >
-      {intent || "UNKNOWN"}
-    </span>
+      {products.slice(0, 2).map((product) => (
+        <div
+          key={product.productId || product.sku}
+          style={{
+            border: "1px solid #d9e4dc",
+            borderRadius: 8,
+            padding: 12,
+            background: "#fbfdf9",
+          }}
+        >
+          <div style={{ fontWeight: 800, color: "#173d2b" }}>{product.name}</div>
+          <div style={{ marginTop: 4, color: "#5d6d62", fontSize: 13 }}>
+            {product.sku} - Base NPR {product.basePrice}
+          </div>
+          {product.cheapestSupplier ? (
+            <div style={{ marginTop: 8, fontWeight: 700, color: "#8a451e" }}>
+              Best supplier: {product.cheapestSupplier.supplierName}, NPR{" "}
+              {product.cheapestSupplier.supplierPrice}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrderConfirmation({ payload, onConfirm, isSending }) {
+  const orderDraft = payload?.data;
+
+  if (
+    payload?.route?.agentIntent !== "CREATE_ORDER" ||
+    orderDraft?.status !== "needs_confirmation" ||
+    !orderDraft?.draftId
+  ) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        marginTop: 12,
+        border: "1px solid #d9e4dc",
+        borderRadius: 8,
+        padding: 12,
+        background: "#fbfdf9",
+      }}
+    >
+      <div style={{ fontWeight: 900, color: "#173d2b" }}>Order confirmation</div>
+      {orderDraft.items.map((item) => (
+        <div key={item.productId} style={{ color: "#31443a", lineHeight: 1.45 }}>
+          {item.quantity} {item.packagingUnit || "unit"} {item.name} - NPR{" "}
+          {item.lineTotal}
+        </div>
+      ))}
+      <div style={{ fontWeight: 900, color: "#8a451e" }}>
+        Total NPR {orderDraft.totalAmount}
+      </div>
+      <button
+        type="button"
+        onClick={() => onConfirm(orderDraft.draftId)}
+        disabled={isSending}
+        style={{
+          justifySelf: "start",
+          border: 0,
+          borderRadius: 8,
+          padding: "10px 14px",
+          background: isSending ? "#8f8a82" : "#1f4f39",
+          color: "#fffaf0",
+          fontWeight: 900,
+          cursor: isSending ? "wait" : "pointer",
+        }}
+      >
+        Confirm order
+      </button>
+    </div>
   );
 }
 
 export default function ChatPage() {
-  const [customerEmail, setCustomerEmail] = useState(
-    "retailer.kathmandu@example.com",
-  );
-  const [message, setMessage] = useState("Need Wai Wai Chicken noodles");
-  const [transcript, setTranscript] = useState([]);
+  const [message, setMessage] = useState("");
+  const [transcript, setTranscript] = useState([
+    {
+      role: "assistant",
+      text:
+        "Namaste. Tell me what you need for your store and I can find products, compare supplier prices, or prepare an order for confirmation.",
+    },
+  ]);
   const [lastResponse, setLastResponse] = useState(null);
   const [error, setError] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const entities = useMemo(() => extractEntities(lastResponse), [lastResponse]);
+  async function sendMessage(userMessage) {
+    const trimmedMessage = userMessage.trim();
 
-  async function handleSubmit(event) {
-    event.preventDefault();
-
-    if (!customerEmail.trim() || !message.trim()) {
-      setError("Customer email and message are required.");
+    if (!trimmedMessage) {
       return;
     }
 
-    const userMessage = message.trim();
-
     setIsSending(true);
     setError("");
-    setTranscript((current) => [...current, { role: "user", text: userMessage }]);
+    setTranscript((current) => [
+      ...current,
+      { role: "user", text: trimmedMessage },
+    ]);
 
     try {
       const response = await fetch(CHAT_ENDPOINT, {
@@ -85,15 +140,15 @@ export default function ChatPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          userEmail: customerEmail.trim(),
-          message: userMessage,
+          userEmail: DEMO_CUSTOMER_EMAIL,
+          message: trimmedMessage,
         }),
       });
 
       const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(payload.error || "Chat request failed.");
+        throw new Error(payload.error || "Unable to reach the commerce assistant.");
       }
 
       setLastResponse(payload);
@@ -102,359 +157,260 @@ export default function ChatPage() {
         {
           role: "assistant",
           text: payload.reply,
-          intent: payload.route?.agentIntent || "UNKNOWN",
+          payload,
         },
       ]);
       setMessage("");
     } catch (requestError) {
-      setError(requestError.message || "Unable to send message.");
+      setError(requestError.message || "Unable to reach the commerce assistant.");
     } finally {
       setIsSending(false);
     }
+  }
+
+  async function confirmOrder(draftId) {
+    setIsSending(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/orders/drafts/${draftId}/confirm`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userEmail: DEMO_CUSTOMER_EMAIL,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to confirm order.");
+      }
+
+      setTranscript((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: `Order confirmed. Your order total is NPR ${payload.totalAmount}.`,
+          payload: {
+            data: payload,
+          },
+        },
+      ]);
+    } catch (confirmError) {
+      setError(confirmError.message || "Unable to confirm order.");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    sendMessage(message);
   }
 
   return (
     <main
       style={{
         minHeight: "100vh",
-        padding: "32px 18px 48px",
+        background: "#f7f2e8",
+        color: "#1f2e26",
       }}
     >
       <section
         style={{
-          maxWidth: 1180,
-          margin: "0 auto",
+          minHeight: "100vh",
           display: "grid",
-          gap: 24,
+          gridTemplateRows: "auto 1fr auto",
+          maxWidth: 920,
+          margin: "0 auto",
+          padding: "18px 14px",
         }}
       >
-        <div
+        <header
           style={{
-            background: "linear-gradient(135deg, #1d3d32 0%, #9f5125 100%)",
-            color: "#fff8f0",
-            borderRadius: 28,
-            padding: "28px 24px",
-            boxShadow: "0 30px 60px rgba(45, 28, 12, 0.18)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "10px 2px 18px",
           }}
         >
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 800,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              opacity: 0.82,
-            }}
-          >
-            Khaacho Commerce Agent OS
-          </p>
-          <div
-            style={{
-              marginTop: 14,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <Link
-              href="/chat"
-              style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.16)",
-                color: "#fff8f0",
-                fontWeight: 700,
-                textDecoration: "none",
-              }}
-            >
-              Chat
-            </Link>
-            <Link
-              href="/admin"
-              style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                background: "#f4dfc5",
-                color: "#7a3714",
-                fontWeight: 800,
-                textDecoration: "none",
-              }}
-            >
-              Admin Dashboard
-            </Link>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: "#173d2b" }}>
+              Khaacho
+            </div>
+            <div style={{ marginTop: 2, color: "#667468", fontSize: 13 }}>
+              Commerce assistant for Kathmandu Kirana Store
+            </div>
           </div>
-          <h1
+          <div
             style={{
-              margin: "12px 0 10px",
-              fontSize: "clamp(2rem, 4vw, 3.6rem)",
-              lineHeight: 1,
+              borderRadius: 999,
+              padding: "8px 12px",
+              background: "#dfeadf",
+              color: "#214f38",
+              fontSize: 13,
+              fontWeight: 800,
             }}
           >
-            Chat Simulator
-          </h1>
-          <p
-            style={{
-              margin: 0,
-              maxWidth: 780,
-              fontSize: 17,
-              lineHeight: 1.6,
-              opacity: 0.92,
-            }}
-          >
-            Send a seeded retailer message to the backend, route it through the
-            master agent, and inspect the reply, intent, and extracted commerce
-            entities in one place.
-          </p>
-        </div>
+            Online
+          </div>
+        </header>
 
         <div
           style={{
-            display: "grid",
-            gap: 24,
-            gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)",
+            overflow: "auto",
+            borderTop: "1px solid #e0d7c8",
+            borderBottom: "1px solid #e0d7c8",
+            padding: "18px 0",
           }}
         >
-          <div
-            style={{
-              background: "rgba(255, 252, 247, 0.92)",
-              borderRadius: 24,
-              padding: 24,
-              border: "1px solid rgba(107, 78, 42, 0.12)",
-              boxShadow: "0 18px 40px rgba(60, 41, 15, 0.08)",
-            }}
-          >
-            <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
-              <label style={{ display: "grid", gap: 8 }}>
-                <span style={{ fontWeight: 700 }}>Seeded Customer Email</span>
-                <input
-                  value={customerEmail}
-                  onChange={(event) => setCustomerEmail(event.target.value)}
-                  placeholder="retailer.kathmandu@example.com"
-                  style={{
-                    padding: "14px 16px",
-                    borderRadius: 16,
-                    border: "1px solid #cdbca8",
-                    fontSize: 15,
-                    background: "#fffdf9",
-                  }}
-                />
-              </label>
+          <div style={{ display: "grid", gap: 14 }}>
+            {transcript.map((entry, index) => {
+              const isUser = entry.role === "user";
 
-              <label style={{ display: "grid", gap: 8 }}>
-                <span style={{ fontWeight: 700 }}>Message</span>
-                <textarea
-                  rows={5}
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Ask about products, prices, or create an order."
-                  style={{
-                    padding: "16px",
-                    borderRadius: 18,
-                    border: "1px solid #cdbca8",
-                    fontSize: 15,
-                    resize: "vertical",
-                    background: "#fffdf9",
-                  }}
-                />
-              </label>
-
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 10,
-                }}
-              >
-                {SAMPLE_PROMPTS.map((samplePrompt) => (
-                  <button
-                    key={samplePrompt}
-                    type="button"
-                    onClick={() => setMessage(samplePrompt)}
-                    style={{
-                      border: 0,
-                      borderRadius: 999,
-                      padding: "10px 14px",
-                      background: "#efe3d0",
-                      color: "#5a3920",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {samplePrompt}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSending}
-                style={{
-                  border: 0,
-                  borderRadius: 18,
-                  padding: "16px 18px",
-                  background: isSending ? "#8f8a82" : "#a94e23",
-                  color: "#fff9f1",
-                  fontSize: 16,
-                  fontWeight: 800,
-                  cursor: isSending ? "wait" : "pointer",
-                }}
-              >
-                {isSending ? "Sending..." : "Send To Agent"}
-              </button>
-            </form>
-
-            {error ? (
-              <div
-                style={{
-                  marginTop: 16,
-                  padding: "14px 16px",
-                  borderRadius: 16,
-                  background: "#fff1ec",
-                  color: "#8c2f15",
-                  fontWeight: 700,
-                }}
-              >
-                {error}
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: 24, display: "grid", gap: 14 }}>
-              {transcript.length === 0 ? (
-                <div
-                  style={{
-                    borderRadius: 18,
-                    padding: 18,
-                    background: "#f8f1e8",
-                    color: "#76553a",
-                  }}
-                >
-                  The conversation will appear here after you send a message.
-                </div>
-              ) : null}
-
-              {transcript.map((entry, index) => (
+              return (
                 <article
                   key={`${entry.role}-${index}`}
                   style={{
-                    borderRadius: 20,
-                    padding: 18,
-                    background:
-                      entry.role === "user"
-                        ? "#f3decb"
-                        : "linear-gradient(135deg, #fdf8ef 0%, #eef7f2 100%)",
-                    alignSelf: entry.role === "user" ? "end" : "stretch",
+                    maxWidth: isUser ? "78%" : "88%",
+                    justifySelf: isUser ? "end" : "start",
+                    borderRadius: 8,
+                    padding: "13px 14px",
+                    background: isUser ? "#1f4f39" : "#fffdf8",
+                    color: isUser ? "#fffaf0" : "#24342c",
+                    border: isUser ? "1px solid #1f4f39" : "1px solid #e2d8ca",
+                    boxShadow: "0 10px 24px rgba(50, 38, 23, 0.07)",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <strong style={{ fontSize: 13, letterSpacing: "0.06em" }}>
-                      {entry.role === "user" ? "CUSTOMER" : "AGENT"}
-                    </strong>
-                    {entry.intent ? <IntentBadge intent={entry.intent} /> : null}
-                  </div>
-                  <p style={{ margin: 0, lineHeight: 1.6 }}>{entry.text}</p>
+                  <p style={{ margin: 0, lineHeight: 1.55 }}>{entry.text}</p>
+                  {!isUser ? <ProductSummary payload={entry.payload} /> : null}
+                  {!isUser ? (
+                    <OrderConfirmation
+                      payload={entry.payload}
+                      onConfirm={confirmOrder}
+                      isSending={isSending}
+                    />
+                  ) : null}
                 </article>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        </div>
 
-          <aside
+        <footer style={{ paddingTop: 14 }}>
+          {lastResponse?.route?.agentIntent ? (
+            <div
+              style={{
+                marginBottom: 10,
+                color: "#627166",
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              Last request: {lastResponse.route.agentIntent.replace("_", " ").toLowerCase()}
+            </div>
+          ) : null}
+
+          <div
             style={{
-              display: "grid",
-              gap: 18,
-              alignContent: "start",
+              display: "flex",
+              gap: 8,
+              overflowX: "auto",
+              paddingBottom: 10,
             }}
           >
-            <section
-              style={{
-                background: "rgba(255, 252, 247, 0.92)",
-                borderRadius: 24,
-                padding: 22,
-                border: "1px solid rgba(107, 78, 42, 0.12)",
-                boxShadow: "0 18px 40px rgba(60, 41, 15, 0.08)",
-              }}
-            >
-              <h2 style={{ margin: "0 0 14px", fontSize: 20 }}>Intent</h2>
-              {lastResponse ? (
-                <IntentBadge intent={lastResponse.route?.agentIntent} />
-              ) : (
-                <p style={{ margin: 0, color: "#786756" }}>
-                  No intent yet. Send a message first.
-                </p>
-              )}
-            </section>
-
-            <section
-              style={{
-                background: "rgba(255, 252, 247, 0.92)",
-                borderRadius: 24,
-                padding: 22,
-                border: "1px solid rgba(107, 78, 42, 0.12)",
-                boxShadow: "0 18px 40px rgba(60, 41, 15, 0.08)",
-              }}
-            >
-              <h2 style={{ margin: "0 0 14px", fontSize: 20 }}>Entities</h2>
-              {entities.length > 0 ? (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                  {entities.map((entity, index) => (
-                    <span
-                      key={`${entity.type}-${index}`}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 14,
-                        background:
-                          entity.type === "product" ? "#e9f1ea" : "#f6e7db",
-                        color: entity.type === "product" ? "#22513a" : "#8b4b20",
-                        fontWeight: 700,
-                        fontSize: 13,
-                      }}
-                    >
-                      {entity.type}: {entity.label}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ margin: 0, color: "#786756" }}>
-                  Matching products and suppliers will appear here.
-                </p>
-              )}
-            </section>
-
-            <section
-              style={{
-                background: "rgba(29, 61, 50, 0.96)",
-                color: "#f8f4eb",
-                borderRadius: 24,
-                padding: 22,
-                boxShadow: "0 18px 40px rgba(30, 39, 34, 0.16)",
-              }}
-            >
-              <h2 style={{ margin: "0 0 14px", fontSize: 20 }}>Backend</h2>
-              <p style={{ margin: "0 0 8px", lineHeight: 1.6 }}>
-                Requests are sent to:
-              </p>
-              <code
+            {SAMPLE_PROMPTS.map((samplePrompt) => (
+              <button
+                key={samplePrompt}
+                type="button"
+                onClick={() => sendMessage(samplePrompt)}
+                disabled={isSending}
                 style={{
-                  display: "block",
-                  padding: "12px 14px",
-                  borderRadius: 16,
-                  background: "rgba(255,255,255,0.08)",
-                  overflowWrap: "anywhere",
+                  flex: "0 0 auto",
+                  border: "1px solid #d4c7b6",
+                  borderRadius: 999,
+                  padding: "9px 12px",
+                  background: "#fffaf2",
+                  color: "#4c3a27",
+                  fontWeight: 700,
+                  cursor: isSending ? "wait" : "pointer",
                 }}
               >
-                {CHAT_ENDPOINT} (proxied to the backend)
-              </code>
-            </section>
-          </aside>
-        </div>
+                {samplePrompt}
+              </button>
+            ))}
+          </div>
+
+          <form
+            onSubmit={handleSubmit}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr auto",
+              gap: 10,
+              alignItems: "end",
+            }}
+          >
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#526158" }}>
+                Message
+              </span>
+              <textarea
+                rows={2}
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="Ask for products, prices, or order help"
+                style={{
+                  minHeight: 52,
+                  maxHeight: 130,
+                  padding: "13px 14px",
+                  borderRadius: 8,
+                  border: "1px solid #cbbca9",
+                  fontSize: 15,
+                  resize: "vertical",
+                  background: "#fffdf8",
+                  color: "#1f2e26",
+                }}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={isSending || !message.trim()}
+              style={{
+                minWidth: 96,
+                height: 52,
+                border: 0,
+                borderRadius: 8,
+                padding: "0 18px",
+                background:
+                  isSending || !message.trim() ? "#9c9a92" : "#a84e23",
+                color: "#fffaf0",
+                fontSize: 15,
+                fontWeight: 900,
+                cursor: isSending || !message.trim() ? "not-allowed" : "pointer",
+              }}
+            >
+              {isSending ? "Sending" : "Send"}
+            </button>
+          </form>
+
+          {error ? (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "11px 12px",
+                borderRadius: 8,
+                background: "#fff1ec",
+                color: "#8c2f15",
+                fontWeight: 700,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+        </footer>
       </section>
     </main>
   );

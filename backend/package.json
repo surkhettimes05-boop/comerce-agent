@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "db:sync": "node scripts/apply-migrations.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "seed": "node src/seed/seed.js",

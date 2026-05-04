@@ -109,9 +109,12 @@ async function createOrder(input) {
       throw new Error("User not found.");
     }
 
+    const tenantId = input.tenantId || user.tenantId;
+
     const productIds = input.items.map((item) => item.productId);
     const products = await transaction.product.findMany({
       where: {
+        tenantId,
         id: { in: productIds },
         isActive: true,
       },
@@ -139,6 +142,7 @@ async function createOrder(input) {
 
     const savedOrder = await transaction.order.create({
       data: {
+        tenantId,
         userId: input.userId,
         status: "CONFIRMED",
         totalAmount: formatMoney(totalAmount),

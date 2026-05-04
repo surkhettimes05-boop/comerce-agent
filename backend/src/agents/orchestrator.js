@@ -1,8 +1,10 @@
 const { classifyIntent } = require("../services/ollama.service");
+const { understandCustomerMessage } = require("../services/message-understanding.service");
 const {
   handleProductAgent,
   queryProductsWithSupplierPricing,
 } = require("./product.agent");
+const { createOrderDraftFromUnderstanding } = require("../services/order-draft.service");
 
 const SUPPORTED_AGENT_INTENTS = [
   "FIND_PRODUCT",
@@ -23,6 +25,52 @@ function normalizeIntentForRouting(intent) {
   return INTENT_ROUTE_ALIASES[intent] || intent;
 }
 
+function classifyIntentLocally(userMessage) {
+  const normalizedMessage = String(userMessage || "").toLowerCase();
+
+  if (
+    /\b(compare|price|pricing|cheapest|supplier prices?|rate|rates|dar|kati|kati ho|kati parcha|sasto)\b/.test(
+      normalizedMessage,
+    )
+  ) {
+    return {
+      intent: "CHECK_PRICE",
+      confidence: "medium",
+      needsClarification: false,
+    };
+  }
+
+  if (
+    /\b(order|buy|purchase|carton|cartons|crate|crates|sack|sacks|pathaunu|pathau|dinu|dinus|bhejnu|bhejdinus)\b/.test(
+      normalizedMessage,
+    )
+  ) {
+    return {
+      intent: "PLACE_ORDER",
+      confidence: "medium",
+      needsClarification: false,
+    };
+  }
+
+  if (
+    /\b(need|find|have|show|search|wai wai|coke|coca|rice|chamal|chaamal|sugar|chini|noodles?|chau chau|chauchau|chahiyo|chaincha|chaieyo|chaio)\b/.test(
+      normalizedMessage,
+    )
+  ) {
+    return {
+      intent: "FIND_PRODUCT",
+      confidence: "medium",
+      needsClarification: false,
+    };
+  }
+
+  return {
+    intent: "UNKNOWN",
+    confidence: "low",
+    needsClarification: true,
+  };
+}
+
 async function handleComparePriceAgent({ message, prismaClient }) {
   const queryResult = await queryProductsWithSupplierPricing({
     message,
@@ -40,23 +88,24 @@ async function handleComparePriceAgent({ message, prismaClient }) {
 
 function createDefaultAgents(sharedContext = {}) {
   return {
-    FIND_PRODUCT: async ({ message }) =>
+    FIND_PRODUCT: async ({ message, understanding }) =>
       handleProductAgent({
-        message,
+        message: understanding.productQuery || message,
         prismaClient: sharedContext.prismaClient,
       }),
-    CREATE_ORDER: async ({ message, classification }) => ({
-      agentName: "create-order-agent",
-      status: "needs_confirmation",
-      confirmationRequired: true,
-      message,
-      classification,
-      reply:
-        "Order intent detected. Confirmation is required before an order can be saved.",
-    }),
-    COMPARE_PRICE: async ({ message }) =>
-      handleComparePriceAgent({
+    CREATE_ORDER: async ({ message, classification, understanding }) => ({
+      ...(await createOrderDraftFromUnderstanding({
+        tenantId: sharedContext.tenantId,
+        userId: sharedContext.userId,
         message,
+        classification,
+        understanding,
+        prismaClient: sharedContext.prismaClient,
+      })),
+    }),
+    COMPARE_PRICE: async ({ message, understanding }) =>
+      handleComparePriceAgent({
+        message: understanding.productQuery || message,
         prismaClient: sharedContext.prismaClient,
       }),
   };
@@ -77,8 +126,25 @@ async function orchestrateMessage(userMessage, options = {}) {
   const classifyIntentFn = options.classifyIntentFn || classifyIntent;
   const agents = buildAgentRegistry(options.agents, {
     prismaClient: options.prismaClient,
+    tenantId: options.tenantId,
+    userId: options.userId,
   });
-  const classification = await classifyIntentFn(userMessage.trim());
+  const understanding = understandCustomerMessage(userMessage.trim());
+  let classification;
+
+  try {
+    classification = await classifyIntentFn(userMessage.trim());
+  } catch {
+    classification = classifyIntentLocally(userMessage.trim());
+  }
+  if (classification.intent === "UNKNOWN" && understanding.intent !== "UNKNOWN") {
+    classification = {
+      intent: understanding.intent,
+      confidence: "medium",
+      needsClarification: understanding.needsClarification,
+    };
+  }
+
   const agentIntent = normalizeIntentForRouting(classification.intent);
   const agentHandler = agents[agentIntent];
 
@@ -91,6 +157,7 @@ async function orchestrateMessage(userMessage, options = {}) {
       agentIntent,
       originalIntent: classification.intent,
       classification,
+      understanding,
       agentResult: null,
     };
   }
@@ -100,6 +167,7 @@ async function orchestrateMessage(userMessage, options = {}) {
     intent: agentIntent,
     originalIntent: classification.intent,
     classification,
+    understanding,
     prismaClient: options.prismaClient,
   };
 
@@ -110,14 +178,18 @@ async function orchestrateMessage(userMessage, options = {}) {
     agentIntent,
     originalIntent: classification.intent,
     classification,
+    understanding,
     agentResult,
   };
 }
 
 function createOrchestrator(options = {}) {
   return {
-    routeMessage(userMessage) {
-      return orchestrateMessage(userMessage, options);
+    routeMessage(userMessage, context = {}) {
+      return orchestrateMessage(userMessage, {
+        ...options,
+        ...context,
+      });
     },
   };
 }
@@ -126,5 +198,6 @@ module.exports = {
   createOrchestrator,
   orchestrateMessage,
   normalizeIntentForRouting,
+  classifyIntentLocally,
   SUPPORTED_AGENT_INTENTS,
 };

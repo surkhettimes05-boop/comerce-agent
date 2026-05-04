@@ -10,6 +10,11 @@ const STOP_WORDS = new Set([
   "an",
   "and",
   "any",
+  "cha",
+  "chaio",
+  "chaieyo",
+  "chaincha",
+  "chahiyo",
   "cartons",
   "compare",
   "do",
@@ -19,14 +24,36 @@ const STOP_WORDS = new Set([
   "me",
   "need",
   "of",
+  "ko",
+  "kati",
+  "ho",
+  "dinus",
+  "dinu",
+  "pathaunu",
+  "pathau",
   "please",
   "price",
+  "rate",
+  "rates",
   "show",
   "the",
   "to",
   "want",
   "with",
   "you",
+]);
+
+const PRODUCT_ALIASES = new Map([
+  ["chau", ["noodles", "wai", "wai"]],
+  ["chauchau", ["noodles", "wai", "wai"]],
+  ["chini", ["sugar"]],
+  ["chamal", ["rice"]],
+  ["chaamal", ["rice"]],
+  ["bhat", ["rice"]],
+  ["coke", ["coca", "cola"]],
+  ["coca", ["coca", "cola"]],
+  ["cold", ["coca", "cola"]],
+  ["drink", ["coca", "cola"]],
 ]);
 
 let defaultPrismaClient;
@@ -75,6 +102,18 @@ function extractSearchTerms(input) {
       .filter((token) => token && !STOP_WORDS.has(token) && token.length >= 2),
   );
 
+  for (const token of [...tokenSet]) {
+    const aliases = PRODUCT_ALIASES.get(token);
+
+    if (!aliases) {
+      continue;
+    }
+
+    for (const alias of aliases) {
+      tokenSet.add(alias);
+    }
+  }
+
   const tokens = [...tokenSet];
 
   return {
@@ -83,12 +122,13 @@ function extractSearchTerms(input) {
   };
 }
 
-function buildProductSearchWhere(searchTerms) {
+function buildProductSearchWhere(searchTerms, options = {}) {
   const allTerms = [...new Set([searchTerms.normalizedQuery, ...searchTerms.tokens])].filter(
     Boolean,
   );
 
   return {
+    ...(options.tenantId ? { tenantId: options.tenantId } : {}),
     isActive: true,
     OR: allTerms.flatMap((term) => [
       { name: { contains: term, mode: "insensitive" } },
@@ -208,7 +248,7 @@ async function queryProductsWithSupplierPricing(options = {}) {
   }
 
   const candidateProducts = await prismaClient.product.findMany({
-    where: buildProductSearchWhere(searchTerms),
+    where: buildProductSearchWhere(searchTerms, options),
     include: {
       supplierProducts: {
         include: {

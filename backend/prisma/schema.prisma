@@ -25,35 +25,124 @@ enum ConversationRole {
   SYSTEM
 }
 
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  STAFF
+  SUPPLIER_CONTACT
+  RETAILER_CONTACT
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum OrderDraftStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+model Tenant {
+  id                String             @id @default(cuid())
+  name              String
+  slug              String             @unique
+  status            TenantStatus       @default(ACTIVE)
+  timezone          String             @default("Asia/Kathmandu")
+  currency          String             @default("NPR")
+  phone             String?
+  billingAddress    String?
+  panOrVatNumber    String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  memberships       TenantMembership[]
+  users             User[]
+  products          Product[]
+  supplierProducts  SupplierProduct[]
+  orders            Order[]
+  conversations     Conversation[]
+  creditProfiles    CreditProfile[]
+  orderDrafts       OrderDraft[]
+}
+
+model Account {
+  id                String             @id @default(cuid())
+  email             String             @unique
+  displayName       String
+  passwordHash      String?
+  authSubject       String?            @unique
+  isPlatformAdmin   Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  memberships       TenantMembership[]
+  users             User[]
+}
+
+model TenantMembership {
+  id          String           @id @default(cuid())
+  tenantId    String
+  accountId   String
+  role        MembershipRole
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account     Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, accountId])
+}
+
 model User {
   id                String            @id @default(cuid())
-  email             String            @unique
+  tenantId          String
+  accountId         String?
+  email             String
   name              String
   role              UserRole          @default(CUSTOMER)
   phone             String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account           Account?          @relation(fields: [accountId], references: [id], onDelete: SetNull)
   orders            Order[]
   conversations     Conversation[]
   suppliedProducts  SupplierProduct[]
   creditProfile     CreditProfile?
+  orderDrafts       OrderDraft[]
+
+  @@unique([tenantId, email])
 }
 
 model Product {
   id                String            @id @default(cuid())
+  tenantId          String
   name              String
-  sku               String            @unique
+  sku               String
   description       String?
   price             Decimal           @db.Decimal(10, 2)
   isActive          Boolean           @default(true)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   supplierProducts  SupplierProduct[]
   orderItems        OrderItem[]
+  draftItems        OrderDraftItem[]
+
+  @@unique([tenantId, sku])
 }
 
 model SupplierProduct {
   id                String    @id @default(cuid())
+  tenantId          String
   supplierId        String
   productId         String
   supplierSku       String?
@@ -61,20 +150,23 @@ model SupplierProduct {
   availableStock    Int       @default(0)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   supplier          User      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([supplierId, productId])
+  @@unique([tenantId, supplierId, productId])
 }
 
 model Order {
   id                String       @id @default(cuid())
+  tenantId          String
   userId            String
   status            OrderStatus  @default(PENDING)
   totalAmount       Decimal      @db.Decimal(10, 2)
   notes             String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   items             OrderItem[]
 }
@@ -95,15 +187,18 @@ model OrderItem {
 
 model Conversation {
   id                String            @id @default(cuid())
+  tenantId          String
   userId            String
   role              ConversationRole
   message           String
   createdAt         DateTime          @default(now())
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model CreditProfile {
   id                String    @id @default(cuid())
+  tenantId          String
   userId            String    @unique
   creditScore       Int
   creditLimit       Decimal   @db.Decimal(10, 2)
@@ -112,5 +207,38 @@ model CreditProfile {
   reviewedAt        DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+}
+
+model OrderDraft {
+  id            String           @id @default(cuid())
+  tenantId      String
+  userId        String
+  status        OrderDraftStatus @default(PENDING_CONFIRMATION)
+  sourceMessage String
+  totalAmount   Decimal          @db.Decimal(10, 2)
+  notes         String?
+  expiresAt     DateTime
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items         OrderDraftItem[]
+}
+
+model OrderDraftItem {
+  id            String      @id @default(cuid())
+  draftId       String
+  productId     String
+  quantity      Int
+  unitPrice     Decimal     @db.Decimal(10, 2)
+  packagingUnit String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  draft         OrderDraft  @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([draftId, productId])
 }

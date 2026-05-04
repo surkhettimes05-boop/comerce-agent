@@ -203,8 +203,16 @@ const products = [
   },
 ];
 
+const defaultTenant = {
+  name: "Khaacho Demo Tenant",
+  slug: "khaacho-demo",
+  currency: "NPR",
+  timezone: "Asia/Kathmandu",
+};
+
 function buildCreditProfiles(retailerRecords) {
   return retailerRecords.map((retailer, index) => ({
+    tenantId: retailer.tenantId,
     userId: retailer.id,
     creditScore: 640 + index * 18,
     creditLimit: (25000 + index * 10000).toFixed(2),
@@ -221,6 +229,7 @@ function buildSupplierPricing(supplierRecords, productRecords) {
 
     return [
       {
+        tenantId: product.tenantId,
         supplierId: primarySupplier.id,
         productId: product.id,
         supplierSku: `${primarySupplier.name.slice(0, 3).toUpperCase()}-${product.sku}`,
@@ -228,6 +237,7 @@ function buildSupplierPricing(supplierRecords, productRecords) {
         availableStock: 80 + index * 5,
       },
       {
+        tenantId: product.tenantId,
         supplierId: secondarySupplier.id,
         productId: product.id,
         supplierSku: `${secondarySupplier.name.slice(0, 3).toUpperCase()}-${product.sku}`,
@@ -240,6 +250,8 @@ function buildSupplierPricing(supplierRecords, productRecords) {
 
 async function resetDatabase() {
   await prisma.$transaction([
+    prisma.orderDraftItem.deleteMany(),
+    prisma.orderDraft.deleteMany(),
     prisma.orderItem.deleteMany(),
     prisma.order.deleteMany(),
     prisma.conversation.deleteMany(),
@@ -247,19 +259,68 @@ async function resetDatabase() {
     prisma.supplierProduct.deleteMany(),
     prisma.product.deleteMany(),
     prisma.user.deleteMany(),
+    prisma.tenantMembership.deleteMany(),
+    prisma.account.deleteMany(),
+    prisma.tenant.deleteMany(),
   ]);
 }
 
 async function seedDatabase() {
   await resetDatabase();
 
-  await prisma.user.createMany({ data: [...retailers, ...suppliers] });
-  await prisma.product.createMany({ data: products });
+  const tenant = await prisma.tenant.create({ data: defaultTenant });
+  const contacts = [...retailers, ...suppliers];
+
+  await prisma.account.createMany({
+    data: contacts.map((person) => ({
+      email: person.email,
+      displayName: person.name,
+    })),
+  });
+
+  const accounts = await prisma.account.findMany();
+  const accountsByEmail = new Map(accounts.map((account) => [account.email, account]));
+
+  await prisma.user.createMany({
+    data: contacts.map((person) => ({
+      tenantId: tenant.id,
+      accountId: accountsByEmail.get(person.email).id,
+      email: person.email,
+      name: person.name,
+      phone: person.phone,
+      role: person.role,
+    })),
+  });
+
+  await prisma.tenantMembership.createMany({
+    data: contacts.map((person) => ({
+      tenantId: tenant.id,
+      accountId: accountsByEmail.get(person.email).id,
+      role: person.role === "SUPPLIER" ? "SUPPLIER_CONTACT" : "RETAILER_CONTACT",
+      status: "ACTIVE",
+    })),
+  });
+
+  await prisma.product.createMany({
+    data: products.map((product) => ({
+      tenantId: tenant.id,
+      ...product,
+    })),
+  });
 
   const [retailerRecords, supplierRecords, productRecords] = await Promise.all([
-    prisma.user.findMany({ where: { role: "CUSTOMER" }, orderBy: { email: "asc" } }),
-    prisma.user.findMany({ where: { role: "SUPPLIER" }, orderBy: { email: "asc" } }),
-    prisma.product.findMany({ orderBy: { sku: "asc" } }),
+    prisma.user.findMany({
+      where: { tenantId: tenant.id, role: "CUSTOMER" },
+      orderBy: { email: "asc" },
+    }),
+    prisma.user.findMany({
+      where: { tenantId: tenant.id, role: "SUPPLIER" },
+      orderBy: { email: "asc" },
+    }),
+    prisma.product.findMany({
+      where: { tenantId: tenant.id },
+      orderBy: { sku: "asc" },
+    }),
   ]);
 
   await prisma.creditProfile.createMany({
@@ -271,6 +332,9 @@ async function seedDatabase() {
   });
 
   return {
+    tenantSlug: tenant.slug,
+    accounts: accounts.length,
+    memberships: contacts.length,
     retailers: retailerRecords.length,
     suppliers: supplierRecords.length,
     products: productRecords.length,

@@ -46,3 +46,27 @@ test("handleProductAgent returns no_match when no products match the message", a
   assert.equal(result.productCount, 0);
   assert.deepEqual(result.products, []);
 });
+
+test("handleProductAgent understands common Nepal-market customer wording", async (t) => {
+  t.after(async () => {
+    await prisma.$disconnect();
+  });
+
+  await seedDatabase();
+
+  const noodles = await handleProductAgent({
+    message: "chau chau chahiyo",
+    prismaClient: prisma,
+  });
+
+  assert.equal(noodles.status, "completed");
+  assert.equal(noodles.products[0].sku.startsWith("WW-"), true);
+
+  const sugar = await handleProductAgent({
+    message: "chini ko rate kati ho",
+    prismaClient: prisma,
+  });
+
+  assert.equal(sugar.status, "completed");
+  assert.equal(sugar.products[0].sku.startsWith("SG-"), true);
+});

@@ -11,10 +11,10 @@ test("createOrder requires confirmation before saving", async (t) => {
 
   await seedDatabase();
 
-  const retailer = await prisma.user.findUnique({
+  const retailer = await prisma.user.findFirst({
     where: { email: "retailer.kathmandu@example.com" },
   });
-  const product = await prisma.product.findUnique({
+  const product = await prisma.product.findFirst({
     where: { sku: "WW-CHICK-075" },
   });
 
@@ -22,6 +22,7 @@ test("createOrder requires confirmation before saving", async (t) => {
     () =>
       createOrder({
         userId: retailer.id,
+        tenantId: retailer.tenantId,
         confirmed: false,
         items: [{ productId: product.id, quantity: 2 }],
         prismaClient: prisma,
@@ -40,7 +41,7 @@ test("createOrder saves order and items in the database", async (t) => {
 
   await seedDatabase();
 
-  const retailer = await prisma.user.findUnique({
+  const retailer = await prisma.user.findFirst({
     where: { email: "retailer.kathmandu@example.com" },
   });
   const products = await prisma.product.findMany({
@@ -57,6 +58,7 @@ test("createOrder saves order and items in the database", async (t) => {
 
   const result = await createOrder({
     userId: retailer.id,
+    tenantId: retailer.tenantId,
     confirmed: true,
     notes: "Deliver tomorrow morning.",
     items: [

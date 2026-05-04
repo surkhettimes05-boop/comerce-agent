@@ -175,6 +175,32 @@ export default async function AdminPage() {
             >
               Admin
             </Link>
+            <Link
+              href="/admin/catalog"
+              style={{
+                padding: "10px 14px",
+                borderRadius: 999,
+                background: "#dfeadf",
+                color: "#1f4b39",
+                fontWeight: 800,
+                textDecoration: "none",
+              }}
+            >
+              Catalog & Rates
+            </Link>
+            <Link
+              href="/admin/growth"
+              style={{
+                padding: "10px 14px",
+                borderRadius: 999,
+                background: "#f4dfc5",
+                color: "#7a3714",
+                fontWeight: 800,
+                textDecoration: "none",
+              }}
+            >
+              Growth Agent
+            </Link>
           </div>
           <h1
             style={{
